@@ -1,0 +1,15 @@
+---
+name: adcyder-attack-simulator 
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - grpcio-tools=1.71
+  - netifaces=0.11
+  - paramiko=3.5
+  - psutil=7.0
+  - requests=2.32
+  - tqdm=4.67
+  - pip=25.1
+  - pip:
+    - pymetasploit3~=1.0.6

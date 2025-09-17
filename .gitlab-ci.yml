@@ -1,0 +1,58 @@
+stages:
+  - lint
+  - test
+  - security
+
+default:
+  image: ubuntu:jammy
+  cache:
+    key: ${CI_COMMIT_REF_SLUG}
+    paths:
+      - ~/micromamba
+      - .pytest_cache/
+
+workflow:
+  rules:
+    - if: $CI_MERGE_REQUEST_ID
+      when: always
+    - when: never
+
+.base_setup: &base_setup
+  before_script:
+    - apt-get update 
+    - apt-get -y install curl make bzip2
+    - curl -Ls https://micro.mamba.pm/api/micromamba/linux-64/latest | tar -xvj bin/micromamba 
+    - bin/micromamba shell init --shell bash --root-prefix=~/micromamba
+    - exec "$BASH"
+    - make init
+
+lint:
+  stage: lint
+  <<: *base_setup
+  script:
+    - make black
+    - make lint
+    - make type-check
+
+test:
+  stage: test
+  <<: *base_setup
+  script:
+    - make test
+  coverage: '/TOTAL.+ ([0-9]{1,3}%)/'
+  artifacts:
+    reports:
+      junit: test-results/junit.xml
+      coverage_report:
+        coverage_format: cobertura
+        path: test-results/coverage.xml
+    expire_in: 1 week
+
+security:
+  stage: security
+  <<: *base_setup
+  script:
+    - make security
+  artifacts:
+    reports:
+      sast: test-results/gl-security-report.json

@@ -1,0 +1,40 @@
+{
+  "permissions": {
+    "allow": [
+      "Edit",
+      "View", 
+      "Bash(make:*)",
+      "Bash(git:*)",
+      "Bash(micromamba:*)",
+      "Bash(docker:*)",
+      "Bash(rm:*.py)",
+      "Bash(rm:*.log)",
+      "Bash(ls:*)",
+      "Bash(find:*)",
+      "Bash(rg:*)",
+      "Bash(grep:*)",
+      "mcp__git__*",
+      "mcp__http__*",
+      "mcp__docker__*"
+    ],
+    "deny": [
+      "Bash(python:*)",
+      "Bash(pytest:*)",
+      "Bash(sudo:*)",
+      "Bash(curl:*)",
+      "Bash(wget:*)",
+      "Bash(aws:*)"
+    ]
+  },
+  
+  "env": {
+    "ANTHROPIC_MODEL": "claude-sonnet-4-20250514",
+    "ANTHROPIC_SMALL_FAST_MODEL": "claude-3-5-haiku-latest",
+    "MAX_THINKING_TOKENS": "25000",
+    "DISABLE_NON_ESSENTIAL_MODEL_CALLS": "1",
+    "DISABLE_TELEMETRY": "1",
+    "DISABLE_ERROR_REPORTING": "1",
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"
+  }
+}
+

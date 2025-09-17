@@ -1,0 +1,23 @@
+syntax = "proto3";
+
+package datastream;
+
+// Define the data point structure
+message DataPoint {
+  // Timestamp for the data point
+  int64 timestamp = 1;
+  
+  // Map for dynamic fields from CSV columns
+  map<string, string> fields = 2;
+}
+
+// Service definition
+service DataStreamService {
+  // Server streaming RPC
+  rpc StreamData(StreamRequest) returns (stream DataPoint) {}
+}
+
+// Request parameters - empty since server controls everything
+message StreamRequest {
+  // Empty request since server determines file and frequency
+}

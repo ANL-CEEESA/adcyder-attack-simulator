@@ -1,0 +1,61 @@
+sequenceDiagram
+    autonumber
+    %% ─── Grouped lifelines ──────────────────────────────
+    box "Code / Orchestration"
+        participant MF  as Makefile
+        participant AT  as AttackHarness
+        participant WH  as WateringHoleAttack
+        participant SA  as StreamAttack
+    end
+
+    box "Attacker-side Processes"
+        participant MSF  as "Metasploit (msfrpcd)"
+        participant HTTP as "HTTP Payload Server"
+    end
+
+    box "Remote Hosts / Services"
+        participant IH   as "Injector Host"
+        participant INV  as Inverter
+        participant HIST as Historian
+        participant KIN  as Kinesis
+    end
+
+    %% ─── 1. Initial access ──────────────────────────────
+    MF   ->> AT   : make test-fdia
+    AT   ->> MSF  : start msfrpcd / connect
+    AT   ->> WH   : establish_reverse_shell()
+
+    WH   ->> HTTP : start HTTP server & serve payload
+    WH   -->> IH  : curl malware              HTTP
+    IH   -->> HTTP: GET /malware              HTTP
+    HTTP -->> IH  : 200 OK (payload)          HTTP
+    IH   -->> MSF : reverse shell
+    MSF  ->> AT   : session established
+
+    %% ─── 2. Deploy helpers ─────────────────────────────
+    AT   ->> SA   : setUp()
+    Note over SA  : Phase 1 – deploy helpers
+    SA   --> IH   : scp injector bundle        SSH
+    SA   --> IH   : scp historian bundle       SSH
+    IH   --> HIST : scp historian bundle       SSH
+
+    %% ─── 3. Reconnaissance ─────────────────────────────
+    Note over SA,INV: Phase 2 – recon & capture
+    SA   ->  INV  : discover Modbus registers   RPC
+    SA   ->  INV  : sample baseline telemetry   RPC
+    SA   ->> SA   : generate transition data
+
+    %% ─── 4. Swap data source ───────────────────────────
+    Note over SA,IH: Phase 3 – swap data source
+    SA   ->  IH   : stop real reporting        RPC
+    SA   --> HIST : ssh start server.py        SSH
+    IH   ->  HIST : gRPC handshake             RPC
+    IH   ->> IH   : launch client.py (Injector)
+
+    %% ─── 5. Continuous forgery ────────────────────────
+    Note over IH,KIN: Phase 4 – forge & stream
+    IH   -->> KIN : PutRecords (forged telemetry) HTTP
+
+    %% ─── 6. Cleanup ───────────────────────────────────
+    SA   ->> AT   : verify interruption
+    AT   ->> MSF  : kill listener / cleanup

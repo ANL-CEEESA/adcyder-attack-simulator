@@ -1,0 +1,16 @@
+---
+name: adcyder-attack-simulator-dev 
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - bandit=1.8  
+  - black=25.1
+  - coverage=7.8
+  - mypy=1.16
+  - pip-audit=2.9
+  - cachecontrol-with-filecache=0.14
+  - pytest=8.4
+  - pytest-asyncio=1.0
+  - pytest-cov=6.1
+  - pytest-mock=3.14
