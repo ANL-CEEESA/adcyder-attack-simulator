@@ -1,10 +1,23 @@
 """
-Modbus UDP Client Library
+Modbus TCP Client Library
 
-A comprehensive Modbus UDP client implementation supporting standard function codes
-with both unicast and broadcast capabilities.
+A Modbus TCP client implementation using pymodbus library for standard operations
+with custom attack-specific functionality for cybersecurity research.
 
-Features:
+Library Integration:
+- Uses pymodbus library for all standard Modbus TCP operations
+- Supports comprehensive Modbus function codes through the library
+- Maintains proper Modbus protocol compliance and error handling
+- Automatic connection management and retry logic
+
+Attack-Specific Features:
+- Device discovery via UDP broadcast and TCP port scanning
+- Custom Modbus packet crafting with proper MBAP headers
+- Multiple discovery packet types (device ID, simple read, diagnostics)
+- Network enumeration capabilities for security assessment
+- Device identification parsing for reconnaissance
+
+Standard Operations (via pymodbus library):
 - Read Coils (Function Code 1)
 - Read Discrete Inputs (Function Code 2)
 - Read Holding Registers (Function Code 3)
@@ -13,39 +26,33 @@ Features:
 - Write Single Register (Function Code 6)
 - Write Multiple Coils (Function Code 15)
 - Write Multiple Registers (Function Code 16)
-- Broadcast support for write functions
-- Response parsing for read functions
-
-TODO:
-- Implement additional Modbus function codes:
-    - Read Exception Status (Function Code 7)
-    - Diagnostics (Function Code 8)
-    - Get Comm Event Counter (Function Code 11)
-    - Get Comm Event Log (Function Code 12)
-    - Report Slave ID (Function Code 17)
-    - Mask Write Register (Function Code 22)
-    - Read/Write Multiple Registers (Function Code 23)
-    - Read FIFO Queue (Function Code 24)
-    - Read Device Identification (Function Code 43/14)
-- Add support for Modbus TCP
-- Implement unit tests for all functions
+- All additional Modbus function codes supported by the library
 """
 
+import ipaddress
+import json
+import logging
 import socket
 import struct
-import json
 import time
-import logging
-from typing import Dict, List, Optional, Any, Union
+import types
+
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Any, Dict, List, Optional, Union
 
 logger = logging.getLogger(__name__)
+
+from pymodbus.client import ModbusTcpClient
+from pymodbus.exceptions import ModbusException
 
 
 class ModbusClient:
     """
-    A Modbus UDP client for communicating with Modbus devices.
+    A Modbus TCP client for communicating with Modbus devices.
 
-    Supports both unicast and broadcast operations with comprehensive
+    Uses pymodbus library when available for standard operations,
+    falls back to custom implementation for attack-specific scenarios.
+    Provides persistent TCP connections with comprehensive
     function code implementation for industrial control systems.
     """
 
@@ -69,10 +76,10 @@ class ModbusClient:
         timeout: float = 2.0,
     ):
         """
-        Initialize the Modbus client.
+        Initialize the Modbus TCP client.
 
         Args:
-            host: Target device IP address or "broadcast" for broadcast operations
+            host: Target device IP address
             port: Modbus port (default 502)
             unit_id: Modbus unit/slave ID (default 1)
             timeout: Socket timeout in seconds (default 2.0)
@@ -81,267 +88,224 @@ class ModbusClient:
         self.port = port
         self.unit_id = unit_id
         self.timeout = timeout
+        self._socket: Optional[socket.socket] = None
+        self._connected = False
+        self._transaction_id = 0
+        self._pymodbus_client: Optional[ModbusTcpClient] = None
 
-    def _create_request(
+        logger.debug("Initialized ModbusClient with pymodbus library")
+
+    def connect(self) -> None:
+        """Establish TCP connection to the Modbus device."""
+        if self._connected and (self._socket or self._pymodbus_client):
+            return
+
+        try:
+            self._connect_library()
+            self._connected = True
+            logger.debug(f"Connected to Modbus device at {self.host}:{self.port}")
+        except Exception as e:
+            logger.error(f"Failed to connect to {self.host}:{self.port}: {e}")
+            self._connected = False
+            self._cleanup_connections()
+            raise
+
+    def _connect_library(self) -> None:
+        """Connect using pymodbus library."""
+        self._pymodbus_client = ModbusTcpClient(
+            host=self.host, port=self.port, timeout=self.timeout
+        )
+        if not self._pymodbus_client.connect():  # type: ignore[no-untyped-call]
+            raise ConnectionError(
+                f"Failed to connect with pymodbus to {self.host}:{self.port}"
+            )
+
+    # Custom connection method removed - now using pymodbus library only
+
+    def _cleanup_connections(self) -> None:
+        """Clean up all connection resources."""
+        if self._socket:
+            self._socket.close()
+            self._socket = None
+        if self._pymodbus_client:
+            self._pymodbus_client.close()  # type: ignore[no-untyped-call]
+            self._pymodbus_client = None
+
+    def disconnect(self) -> None:
+        """Close the TCP connection."""
+        self._cleanup_connections()
+        self._connected = False
+        logger.debug("Disconnected from Modbus device")
+
+    # Custom request creation removed - now handled by pymodbus library integration
+
+    # Custom response parsing removed - now handled by pymodbus library integration
+
+    def _send_request_library(
         self,
         function_code: int,
         start_address: int,
-        quantity: int,
+        quantity: int = 1,
         data: Optional[List[int]] = None,
-        is_broadcast: bool = False,
-    ) -> bytes:
+    ) -> Dict[str, Any]:
         """
-        Constructs a Modbus request PDU + MBAP header for UDP.
+        Send Modbus request using pymodbus library.
 
         Args:
             function_code: Modbus function code
             start_address: Starting register/coil address
             quantity: Number of registers/coils to read/write
             data: Data values for write operations
-            is_broadcast: Whether this is a broadcast request
-
-        Returns:
-            Raw Modbus request bytes
-        """
-        unit_id = 0 if is_broadcast else self.unit_id
-        data = data or []
-
-        # Calculate length field in MBAP (excluding the 6-byte header)
-        if function_code in [5, 6]:
-            length = 6
-        elif function_code in [15, 16]:
-            byte_count = (quantity + 7) // 8 if function_code == 15 else quantity * 2
-            length = 7 + byte_count
-        else:
-            length = 6
-
-        # MBAP header: Transaction ID, Protocol ID, Length, Unit ID
-        header = struct.pack(">HHHB", 1, 0, length, unit_id)
-
-        # Function-specific payload
-        if function_code == 5:  # Write Single Coil
-            value = 0xFF00 if data and data[0] else 0x0000
-            data_bytes = struct.pack(">BHH", function_code, start_address, value)
-        elif function_code == 6:  # Write Single Register
-            data_bytes = struct.pack(">BHH", function_code, start_address, data[0])
-        elif function_code == 15:  # Write Multiple Coils
-            byte_count = (quantity + 7) // 8
-            coil_data = bytearray(byte_count)
-            for i, bit in enumerate(data):
-                if bit:
-                    coil_data[i // 8] |= 1 << (i % 8)
-            data_bytes = (
-                struct.pack(">BHHB", function_code, start_address, quantity, byte_count)
-                + coil_data
-            )
-        elif function_code == 16:  # Write Multiple Registers
-            byte_count = quantity * 2
-            register_data = b"".join(struct.pack(">H", val) for val in data)
-            data_bytes = (
-                struct.pack(">BHHB", function_code, start_address, quantity, byte_count)
-                + register_data
-            )
-        else:  # Read operations
-            data_bytes = struct.pack(">BHH", function_code, start_address, quantity)
-
-        return header + data_bytes
-
-    def _setup_broadcast_socket(self) -> socket.socket:
-        """Sets up a UDP socket configured for broadcast use."""
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        sock.bind(("", self.port))
-        return sock
-
-    def _collect_responses(
-        self, sock: socket.socket, timeout: Optional[float] = None
-    ) -> List[Dict[str, Any]]:
-        """
-        Collects responses over a timeout window from multiple Modbus devices.
-
-        Args:
-            sock: UDP socket to receive on
-            timeout: Collection timeout (uses instance timeout if None)
-
-        Returns:
-            List of response dictionaries with source IP and parsed data
-        """
-        if timeout is None:
-            timeout = self.timeout
-
-        responses = []
-        start_time = time.time()
-        sock.settimeout(0.1)  # Keep original 0.1s timeout for individual receives
-
-        while time.time() - start_time < timeout:
-            try:
-                data, addr = sock.recvfrom(1024)
-                response = self._parse_response(data)
-                responses.append({"source": addr[0], "data": response})
-            except socket.timeout:
-                continue
-            except Exception as e:
-                logger.warning(f"Error receiving response: {e}")
-
-        return responses
-
-    def _parse_response(self, response: bytes) -> Dict[str, Any]:
-        """
-        Parses a raw Modbus response into structured fields.
-
-        Args:
-            response: Raw response bytes
-
-        Returns:
-            Dictionary containing parsed response data
-        """
-        result: Dict[str, Any] = {
-            "raw_hex": response.hex(),
-            "length": len(response),
-            "function_code": response[7] if len(response) > 7 else None,
-        }
-
-        # Exception response check
-        if result["function_code"] is not None and result["function_code"] >= 0x80:
-            result["exception_code"] = response[8] if len(response) > 8 else None
-            result["error"] = "Modbus exception response"
-            return result
-
-        if len(response) > 9:
-            data_length = response[8]
-            data_bytes = response[9 : 9 + data_length]
-
-            if result["function_code"] in [3, 4]:  # Register reads
-                result["values"] = [
-                    struct.unpack(">H", data_bytes[i : i + 2])[0]
-                    for i in range(0, len(data_bytes), 2)
-                ]
-            elif result["function_code"] in [1, 2]:  # Coil/discrete input reads
-                values = []
-                for byte in data_bytes:
-                    for bit in range(8):
-                        values.append((byte >> bit) & 1)
-                result["values"] = values
-
-        return result
-
-    def _send_request(
-        self,
-        function_code: int,
-        start_address: int,
-        quantity: int = 1,
-        data: Optional[List[int]] = None,
-        broadcast: bool = False,
-    ) -> Dict[str, Any]:
-        """
-        Sends a Modbus request and handles the response.
-
-        Args:
-            function_code: Modbus function code
-            start_address: Starting address
-            quantity: Number of items to read/write
-            data: Data for write operations
-            broadcast: Whether to broadcast the request
 
         Returns:
             Dictionary containing response data or error information
         """
-        sock = None
+        if not self._pymodbus_client:
+            return {"error": "Not connected to device"}
+
         try:
-            is_broadcast = broadcast or self.host in ["255.255.255.255", "broadcast"]
-            sock = (
-                self._setup_broadcast_socket()
-                if is_broadcast
-                else socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            )
+            logger.debug(f"Using pymodbus library for function code {function_code}")
 
-            target_ip = "255.255.255.255" if is_broadcast else self.host
+            # Map function codes to pymodbus methods
+            if function_code == 1:  # Read Coils
+                response = self._pymodbus_client.read_coils(  # type: ignore[misc]
+                    start_address, quantity, self.unit_id
+                )
+                if response.isError():
+                    return {"error": f"Read coils error: {response}"}
+                return {
+                    "function_code": function_code,
+                    "address": start_address,
+                    "count": quantity,
+                    "values": response.bits[:quantity],
+                    "library": "pymodbus",
+                }
 
-            request = self._create_request(
-                function_code, start_address, quantity, data, is_broadcast
-            )
-            sock.sendto(request, (target_ip, self.port))
+            elif function_code == 2:  # Read Discrete Inputs
+                response = self._pymodbus_client.read_discrete_inputs(  # type: ignore[misc]
+                    start_address, quantity, self.unit_id
+                )
+                if response.isError():
+                    return {"error": f"Read discrete inputs error: {response}"}
+                return {
+                    "function_code": function_code,
+                    "address": start_address,
+                    "count": quantity,
+                    "values": response.bits[:quantity],
+                    "library": "pymodbus",
+                }
 
-            if is_broadcast:
-                if function_code in [5, 6, 15, 16]:  # Write operations
-                    return {"status": "broadcast_write_complete"}
-                # For broadcast reads, collect responses
-                responses = self._collect_responses(sock)
-                if len(responses) > 1:
-                    return {"multi_device_response": responses}
-                elif len(responses) == 1:
-                    return responses[0]["data"]  # type: ignore
-                else:
-                    return {"error": "No responses received"}
+            elif function_code == 3:  # Read Holding Registers
+                response = self._pymodbus_client.read_holding_registers(  # type: ignore[misc]
+                    start_address, quantity, self.unit_id
+                )
+                if response.isError():
+                    return {"error": f"Read holding registers error: {response}"}
+                return {
+                    "function_code": function_code,
+                    "address": start_address,
+                    "count": quantity,
+                    "values": response.registers,
+                    "library": "pymodbus",
+                }
+
+            elif function_code == 4:  # Read Input Registers
+                response = self._pymodbus_client.read_input_registers(  # type: ignore[misc]
+                    start_address, quantity, self.unit_id
+                )
+                if response.isError():
+                    return {"error": f"Read input registers error: {response}"}
+                return {
+                    "function_code": function_code,
+                    "address": start_address,
+                    "count": quantity,
+                    "values": response.registers,
+                    "library": "pymodbus",
+                }
+
+            elif function_code == 5:  # Write Single Coil
+                if not data:
+                    return {"error": "Data required for write operation"}
+                value = bool(data[0])
+                response = self._pymodbus_client.write_coil(  # type: ignore[misc]
+                    start_address, value, self.unit_id
+                )
+                if response.isError():
+                    return {"error": f"Write single coil error: {response}"}
+                return {
+                    "function_code": function_code,
+                    "address": start_address,
+                    "value": value,
+                    "success": True,
+                    "library": "pymodbus",
+                }
+
+            elif function_code == 6:  # Write Single Register
+                if not data:
+                    return {"error": "Data required for write operation"}
+                reg_value = int(data[0])
+                response = self._pymodbus_client.write_register(  # type: ignore[misc]
+                    start_address, reg_value, self.unit_id
+                )
+                if response.isError():
+                    return {"error": f"Write single register error: {response}"}
+                return {
+                    "function_code": function_code,
+                    "address": start_address,
+                    "value": reg_value,
+                    "success": True,
+                    "library": "pymodbus",
+                }
+
+            elif function_code == 15:  # Write Multiple Coils
+                if not data:
+                    return {"error": "Data required for write operation"}
+                values = [bool(x) for x in data[:quantity]]
+                response = self._pymodbus_client.write_coils(  # type: ignore[misc]
+                    start_address, values, self.unit_id
+                )
+                if response.isError():
+                    return {"error": f"Write multiple coils error: {response}"}
+                return {
+                    "function_code": function_code,
+                    "address": start_address,
+                    "count": quantity,
+                    "values": values,
+                    "success": True,
+                    "library": "pymodbus",
+                }
+
+            elif function_code == 16:  # Write Multiple Registers
+                if not data:
+                    return {"error": "Data required for write operation"}
+                reg_values = [int(x) for x in data[:quantity]]
+                response = self._pymodbus_client.write_registers(  # type: ignore[misc]
+                    start_address, reg_values, self.unit_id
+                )
+                if response.isError():
+                    return {"error": f"Write multiple registers error: {response}"}
+                return {
+                    "function_code": function_code,
+                    "address": start_address,
+                    "count": quantity,
+                    "values": reg_values,
+                    "success": True,
+                    "library": "pymodbus",
+                }
+
             else:
-                sock.settimeout(self.timeout)
-                response, _ = sock.recvfrom(1024)
-                return self._parse_response(response)
+                logger.warning(f"Unsupported function code {function_code}")
+                return {"error": f"Unsupported function code: {function_code}"}
 
         except Exception as e:
-            logger.error(f"Modbus request failed: {e}")
-            return {"error": str(e)}
-        finally:
-            if sock:
-                sock.close()
+            logger.error(f"pymodbus library request failed: {e}")
+            return {"error": f"Library request failed: {str(e)}"}
 
-    # Read Functions
-    def read_coils(
-        self, start_address: int, count: int = 1, broadcast: bool = False
-    ) -> Dict[str, Any]:
-        """Read coil status (Function Code 1)."""
-        return self._send_request(1, start_address, count, broadcast=broadcast)
+    # Custom _send_request method removed - now handled by pymodbus library integration
 
-    def read_discrete_inputs(
-        self, start_address: int, count: int = 1, broadcast: bool = False
-    ) -> Dict[str, Any]:
-        """Read discrete input status (Function Code 2)."""
-        return self._send_request(2, start_address, count, broadcast=broadcast)
+    # Custom _receive_all method removed - now handled by pymodbus library integration
 
-    def read_holding_registers(
-        self, start_address: int, count: int = 1, broadcast: bool = False
-    ) -> Dict[str, Any]:
-        """Read holding registers (Function Code 3)."""
-        return self._send_request(3, start_address, count, broadcast=broadcast)
-
-    def read_input_registers(
-        self, start_address: int, count: int = 1, broadcast: bool = False
-    ) -> Dict[str, Any]:
-        """Read input registers (Function Code 4)."""
-        return self._send_request(4, start_address, count, broadcast=broadcast)
-
-    # Write Functions
-    def write_single_coil(
-        self, address: int, value: bool, broadcast: bool = False
-    ) -> Dict[str, Any]:
-        """Write single coil (Function Code 5)."""
-        return self._send_request(
-            5, address, 1, [1 if value else 0], broadcast=broadcast
-        )
-
-    def write_single_register(
-        self, address: int, value: int, broadcast: bool = False
-    ) -> Dict[str, Any]:
-        """Write single register (Function Code 6)."""
-        return self._send_request(6, address, 1, [value], broadcast=broadcast)
-
-    def write_multiple_coils(
-        self, start_address: int, values: List[bool], broadcast: bool = False
-    ) -> Dict[str, Any]:
-        """Write multiple coils (Function Code 15)."""
-        data = [1 if v else 0 for v in values]
-        return self._send_request(
-            15, start_address, len(values), data, broadcast=broadcast
-        )
-
-    def write_multiple_registers(
-        self, start_address: int, values: List[int], broadcast: bool = False
-    ) -> Dict[str, Any]:
-        """Write multiple registers (Function Code 16)."""
-        return self._send_request(
-            16, start_address, len(values), values, broadcast=broadcast
-        )
+    # Individual read/write methods removed - now handled by send_command() with library integration
 
     # Convenience Methods
     def send_command(
@@ -350,7 +314,6 @@ class ModbusClient:
         address: int,
         number: int = 1,
         data_registers: Union[str, List[int]] = "",
-        broadcast: bool = False,
     ) -> str:
         """
         Send a Modbus command using string action names (backward compatibility).
@@ -360,7 +323,6 @@ class ModbusClient:
             address: Starting address
             number: Number of items
             data_registers: Data as comma-separated string or list of integers
-            broadcast: Whether to broadcast
 
         Returns:
             JSON string containing response
@@ -379,20 +341,455 @@ class ModbusClient:
             data = data_registers or []
 
         function_code = self.FUNCTION_CODES[action]
-        result = self._send_request(function_code, address, number, data, broadcast)
+
+        result = self._send_request_library(function_code, address, number, data)
         return json.dumps(result)
 
-    def broadcast_command(
+    # ===================
+    # ATTACK-SPECIFIC METHODS (Custom Implementation)
+    # These methods are kept for attack simulation and discovery purposes
+    # ===================
+    def discover_devices(
         self,
-        action: str,
-        address: int,
-        number: int = 1,
-        data_registers: Union[str, List[int]] = "",
-    ) -> str:
-        """Convenience wrapper to broadcast a Modbus command."""
-        return self.send_command(
-            action, address, number, data_registers, broadcast=True
+        broadcast_address: str = "255.255.255.255",
+        port: int = 502,
+        timeout: float = 10.0,
+        retries: int = 3,
+        wait_between: float = 0.5,
+        scan_network: bool = True,
+        network_range: str = "192.168.1.0/24",
+    ) -> List[Dict[str, Any]]:
+        """
+        Discover Modbus devices using multiple discovery methods.
+
+        Args:
+            broadcast_address: Broadcast address to send to (default: 255.255.255.255)
+            port: Port to discover on (default: 502)
+            timeout: Total time to wait for responses in seconds
+            retries: Number of discovery packets to send
+            wait_between: Time between retry packets in seconds
+            scan_network: Whether to perform TCP port scanning
+            network_range: Network range to scan (CIDR notation)
+
+        Returns:
+            List of discovered devices with their information
+        """
+        logger.info(f"Starting comprehensive Modbus device discovery")
+        all_devices = []
+
+        # Method 1: UDP Broadcast Discovery
+        logger.info("Phase 1: UDP broadcast discovery")
+        udp_devices = self._udp_broadcast_discovery(
+            broadcast_address, port, timeout, retries, wait_between
         )
+        all_devices.extend(udp_devices)
+
+        # Method 2: TCP Port Scanning (if enabled)
+        if scan_network:
+            logger.info(f"Phase 2: TCP port scanning on {network_range}")
+            tcp_devices = self._tcp_port_scan_discovery(network_range, port)
+            all_devices.extend(tcp_devices)
+
+        # Remove duplicates and merge information
+        unique_devices = {}
+        for device in all_devices:
+            ip = device.get("ip")
+            if ip and ip not in unique_devices:
+                unique_devices[ip] = device
+            elif ip in unique_devices:
+                # Merge information from multiple discovery methods
+                existing = unique_devices[ip]
+                for key, value in device.items():
+                    if key not in existing or existing[key] in ["Unknown", "N/A"]:
+                        existing[key] = value
+
+        final_devices = list(unique_devices.values())
+        logger.info(f"Discovery complete. Found {len(final_devices)} unique devices")
+        return final_devices
+
+    def _udp_broadcast_discovery(
+        self,
+        broadcast_address: str,
+        port: int,
+        timeout: float,
+        retries: int,
+        wait_between: float,
+    ) -> List[Dict[str, Any]]:
+        """UDP broadcast discovery method."""
+        devices = []
+
+        # Try multiple Modbus packet types for better compatibility
+        discovery_packets = [
+            self._create_discovery_packet(),  # Device identification
+            self._create_simple_read_packet(),  # Simple coil read
+            self._create_diagnostic_packet(),  # Diagnostic packet
+        ]
+
+        for packet_type, packet in enumerate(discovery_packets):
+            logger.debug(f"Trying Modbus discovery packet type {packet_type + 1}")
+
+            sock = self._create_broadcast_socket(port)
+            if not sock:
+                continue
+
+            try:
+                # Send discovery packets
+                for retry in range(retries):
+                    sock.sendto(packet, (broadcast_address, port))
+                    if retry < retries - 1:
+                        time.sleep(wait_between)
+
+                # Collect responses with shorter timeout per packet type
+                packet_timeout = timeout / len(discovery_packets)
+                packet_devices = self._collect_discovery_responses(sock, packet_timeout)
+                devices.extend(packet_devices)
+
+            finally:
+                sock.close()
+
+        return devices
+
+    def _tcp_port_scan_discovery(
+        self, network_range: str, port: int
+    ) -> List[Dict[str, Any]]:
+        """TCP port scanning discovery method."""
+        devices = []
+
+        try:
+            network = ipaddress.IPv4Network(network_range, strict=False)
+            hosts = list(network.hosts())
+
+            logger.info(f"Scanning {len(hosts)} hosts for Modbus on port {port}")
+
+            # Use thread pool for concurrent scanning
+            with ThreadPoolExecutor(max_workers=50) as executor:
+                future_to_host = {
+                    executor.submit(self._test_modbus_tcp, str(host), port): host
+                    for host in hosts
+                }
+
+                for future in as_completed(future_to_host, timeout=60):
+                    host = future_to_host[future]
+                    try:
+                        result = future.result()
+                        if result:
+                            devices.append(result)
+                            logger.info(f"Found Modbus device via TCP: {result['ip']}")
+                    except Exception as e:
+                        logger.debug(f"TCP scan failed for {host}: {e}")
+
+        except Exception as e:
+            logger.error(f"Network scanning failed: {e}")
+
+        return devices
+
+    def _test_modbus_tcp(self, host: str, port: int) -> Optional[Dict[str, Any]]:
+        """Test if a host has Modbus service on TCP port."""
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(3.0)  # Longer timeout for potentially filtered ports
+            result = sock.connect_ex((host, port))
+
+            if result == 0:
+                # Port is open, try to send a Modbus packet
+                try:
+                    # Try device identification first
+                    test_packet = self._create_discovery_packet()
+                    sock.sendall(test_packet)
+
+                    # Try to read response
+                    sock.settimeout(2.0)
+                    response = sock.recv(1024)
+
+                    if response and len(response) >= 8:  # Valid MBAP response
+                        device_info = self._parse_discovery_response(response, host)
+                        if device_info:
+                            device_info["discovery_method"] = "TCP_SCAN"
+                            return device_info
+
+                    # If device ID failed, try simple read
+                    simple_packet = self._create_simple_read_packet()
+                    sock.sendall(simple_packet)
+                    response = sock.recv(1024)
+
+                    if response:
+                        return {
+                            "ip": host,
+                            "port": port,
+                            "protocol": "Modbus",
+                            "discovery_method": "TCP_SCAN",
+                            "status": "responsive",
+                            "vendor": "Unknown",
+                            "model": "Unknown",
+                            "raw_hex": response.hex(),
+                        }
+                    else:
+                        return {
+                            "ip": host,
+                            "port": port,
+                            "protocol": "Modbus",
+                            "discovery_method": "TCP_SCAN",
+                            "status": "port_open",
+                            "vendor": "Unknown",
+                            "model": "Unknown",
+                            "raw_hex": "N/A",
+                        }
+
+                except Exception as e:
+                    logger.debug(f"Modbus test failed for {host}: {e}")
+                    # Port open but no valid Modbus response
+                    return {
+                        "ip": host,
+                        "port": port,
+                        "protocol": "Modbus",
+                        "discovery_method": "TCP_SCAN",
+                        "status": "port_open_no_response",
+                        "vendor": "Unknown",
+                        "model": "Unknown",
+                        "raw_hex": "N/A",
+                    }
+
+            sock.close()
+            return None
+
+        except Exception:
+            return None
+
+    def auto_connect(
+        self,
+        broadcast_address: str = "255.255.255.255",
+        port: int = 502,
+        timeout: float = 10.0,
+    ) -> bool:
+        """
+        Automatically discover devices and connect to the first responsive one.
+
+        Args:
+            broadcast_address: Broadcast address to send to (default: 255.255.255.255)
+            port: Port to broadcast to (default: 502)
+            timeout: Time to wait for discovery responses
+
+        Returns:
+            True if connected successfully, False otherwise
+        """
+        devices = self.discover_devices(broadcast_address, port, timeout)
+        if not devices:
+            logger.warning("No devices discovered for auto-connect")
+            return False
+
+        # Connect to first discovered device
+        device = devices[0]
+        self.host = device["ip"]
+        self.port = port
+
+        try:
+            self.connect()
+            logger.info(
+                f"Auto-connected to {device['ip']} ({device.get('vendor', 'Unknown')})"
+            )
+            return True
+        except Exception as e:
+            logger.error(f"Failed to auto-connect to {device['ip']}: {e}")
+            return False
+
+    def _create_discovery_packet(self) -> bytes:
+        """
+        Create a Modbus Read Device Identification packet for UDP broadcast.
+        Function 0x2B (Read Device Identification), MEI Type 0x0E, Read Device ID 0x01, Object ID 0x00
+        """
+        # MBAP header for discovery: Transaction ID=1, Protocol=0, Length=5, Unit=1
+        mbap_header = struct.pack(">HHHB", 1, 0, 5, 1)
+
+        # PDU: Function 0x2B, MEI Type 0x0E, Read Device ID 0x01, Object ID 0x00
+        pdu = struct.pack(">BBBB", 0x2B, 0x0E, 0x01, 0x00)
+
+        return mbap_header + pdu
+
+    def _create_simple_read_packet(self) -> bytes:
+        """Create a simple Modbus read coils packet for discovery."""
+        # MBAP header: Transaction ID=2, Protocol=0, Length=6, Unit=1
+        mbap_header = struct.pack(">HHHB", 2, 0, 6, 1)
+        # PDU: Function 0x01 (Read Coils), Start Address=0, Quantity=1
+        pdu = struct.pack(">BHH", 0x01, 0x0000, 0x0001)
+        return mbap_header + pdu
+
+    def _create_diagnostic_packet(self) -> bytes:
+        """Create a Modbus diagnostic packet for discovery."""
+        # MBAP header: Transaction ID=3, Protocol=0, Length=6, Unit=1
+        mbap_header = struct.pack(">HHHB", 3, 0, 6, 1)
+        # PDU: Function 0x08 (Diagnostics), Sub-function=0x0000 (Return Query Data)
+        pdu = struct.pack(">BHH", 0x08, 0x0000, 0x0000)
+        return mbap_header + pdu
+
+    def _create_broadcast_socket(self, bind_port: int) -> Optional[socket.socket]:
+        """Create and configure a UDP socket for broadcast discovery."""
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.settimeout(0.5)
+            # Bind to any available port for sending
+            sock.bind(("", 0))
+            logger.debug("Created UDP broadcast socket")
+            return sock
+        except Exception as e:
+            logger.error(f"Failed to create broadcast socket: {e}")
+            return None
+
+    def _collect_discovery_responses(
+        self, sock: socket.socket, timeout: float
+    ) -> List[Dict[str, Any]]:
+        """Collect and parse discovery responses from the network."""
+        devices = []
+        seen_addresses = set()
+        start_time = time.time()
+
+        logger.info(f"Collecting discovery responses for {timeout} seconds...")
+
+        while time.time() - start_time < timeout:
+            try:
+                remaining_time = timeout - (time.time() - start_time)
+                if remaining_time <= 0:
+                    break
+
+                sock.settimeout(min(0.5, remaining_time))
+                data, addr = sock.recvfrom(1024)
+
+                # Skip duplicate responses from same IP
+                if addr[0] in seen_addresses:
+                    continue
+                seen_addresses.add(addr[0])
+
+                # Parse the response
+                device_info = self._parse_discovery_response(data, addr[0])
+                if device_info:
+                    devices.append(device_info)
+                    logger.info(f"Discovered device: {device_info}")
+
+            except socket.timeout:
+                continue
+            except Exception as e:
+                logger.warning(f"Error receiving discovery response: {e}")
+                continue
+
+        return devices
+
+    def _parse_discovery_response(
+        self, data: bytes, ip: str
+    ) -> Optional[Dict[str, Any]]:
+        """Parse a Modbus discovery response and extract device information."""
+        try:
+            if len(data) < 9:  # Minimum MBAP + function code
+                logger.debug(f"Short response from {ip}: {data.hex()}")
+                return {
+                    "ip": ip,
+                    "vendor": "Unknown",
+                    "model": "Unknown",
+                    "raw_hex": data.hex(),
+                }
+
+            # Parse MBAP header
+            transaction_id, protocol_id, length, unit_id = struct.unpack(
+                ">HHHB", data[:7]
+            )
+
+            if len(data) < 7 + length:
+                logger.debug(f"Incomplete response from {ip}")
+                return {
+                    "ip": ip,
+                    "vendor": "Unknown",
+                    "model": "Unknown",
+                    "raw_hex": data.hex(),
+                }
+
+            # Check if this is a Read Device Identification response (Function 0x2B)
+            if len(data) > 7 and data[7] == 0x2B:
+                return self._parse_device_identification(data[7:], ip)
+            else:
+                # Generic response - just record the device
+                logger.debug(f"Generic Modbus response from {ip}")
+                return {
+                    "ip": ip,
+                    "vendor": "Unknown",
+                    "model": "Unknown",
+                    "raw_hex": data.hex(),
+                }
+
+        except Exception as e:
+            logger.warning(f"Error parsing discovery response from {ip}: {e}")
+            return {
+                "ip": ip,
+                "vendor": "Error",
+                "model": "Parse Failed",
+                "raw_hex": data.hex(),
+            }
+
+    def _parse_device_identification(self, pdu: bytes, ip: str) -> Dict[str, Any]:
+        """Parse Read Device Identification response data."""
+        device_info = {
+            "ip": ip,
+            "vendor": "Unknown",
+            "model": "Unknown",
+            "serial": "Unknown",
+        }
+
+        try:
+            if len(pdu) < 6:  # Minimum for device ID response
+                return device_info
+
+            # Basic parsing - this is a simplified version
+            # Real device ID responses have complex TLV structure
+            mei_type = pdu[1] if len(pdu) > 1 else 0
+            conformity = pdu[2] if len(pdu) > 2 else 0
+
+            if mei_type == 0x0E:  # Read Device Identification
+                # Look for common device identification strings in the response
+                response_str = pdu.hex()
+                device_info["raw_response"] = response_str
+
+                # Try to extract readable strings (simplified approach)
+                try:
+                    # Look for ASCII strings in the response
+                    ascii_parts = []
+                    for i in range(6, len(pdu)):
+                        if 32 <= pdu[i] <= 126:  # Printable ASCII
+                            ascii_parts.append(chr(pdu[i]))
+                        else:
+                            if ascii_parts:
+                                break
+
+                    if ascii_parts:
+                        ascii_str = "".join(ascii_parts)
+                        if len(ascii_str) > 2:
+                            device_info["vendor"] = ascii_str[:20]  # Limit length
+
+                except Exception:
+                    pass
+
+            logger.debug(f"Parsed device identification for {ip}: {device_info}")
+            return device_info
+
+        except Exception as e:
+            logger.warning(f"Error parsing device identification from {ip}: {e}")
+            return device_info
+
+    def __del__(self) -> None:
+        """Clean up connection when object is destroyed."""
+        self.disconnect()
+
+    def __enter__(self) -> "ModbusClient":
+        """Context manager entry."""
+        self.connect()
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: types.TracebackType | None,
+    ) -> None:
+        """Context manager exit."""
+        self.disconnect()
 
     def __repr__(self) -> str:
         return f"ModbusClient(host='{self.host}', port={self.port}, unit_id={self.unit_id})"
@@ -409,18 +806,5 @@ def send_modbus_request(
     data_registers: str,
 ) -> str:
     """Legacy function for backward compatibility."""
-    client = ModbusClient(host=ip, port=port, unit_id=unit_id)
-    return client.send_command(action, address, number, data_registers)
-
-
-def broadcast_modbus_command(
-    port: int,
-    unit_id: int,
-    action: str,
-    address: int,
-    number: int,
-    data_registers: str,
-) -> str:
-    """Legacy function for backward compatibility."""
-    client = ModbusClient(host="broadcast", port=port, unit_id=unit_id)
-    return client.broadcast_command(action, address, number, data_registers)
+    with ModbusClient(host=ip, port=port, unit_id=unit_id) as client:
+        return client.send_command(action, address, number, data_registers)

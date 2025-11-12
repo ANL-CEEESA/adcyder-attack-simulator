@@ -178,7 +178,9 @@ class InverterPivotAttack(WateringHoleAttack):
             # Store aggreagtor SSH client separately from the inherited one
             self.aggregator_ssh_client = self.ssh_client
 
-            if not self.validate_ssh_session(self.aggregator_ssh_client):
+            if self.aggregator_ssh_client is None or not self.validate_ssh_session(
+                self.aggregator_ssh_client
+            ):
                 raise RuntimeError("Aggregator SSH session validation failed")
 
             logging.info("Successfully established SSH session with aggregator")
@@ -372,8 +374,11 @@ class InverterPivotAttack(WateringHoleAttack):
             )
 
             # Create a new event loop for the proxy in a separate thread
-            def run_proxy_in_thread():
+            def run_proxy_in_thread() -> None:
                 """Run the proxy server in its own thread with a new event loop."""
+                if self.modbus_proxy is None:
+                    logging.error("Proxy not initialized")
+                    return
                 try:
                     # Create a new event loop for this thread
                     self.proxy_loop = asyncio.new_event_loop()
@@ -778,5 +783,9 @@ class InverterPivotAttack(WateringHoleAttack):
 
         This test method serves as the entry point for the unittest discovery
         mechanism used by the Makefile experiment targets.
+
+        Note: This is an integration test that requires Metasploit and real
+        network infrastructure. For unit testing, use the mocked version in
+        tests/controller/test_inverter_pivot_attack.py
         """
         self.run_inverter_pivot_attack()

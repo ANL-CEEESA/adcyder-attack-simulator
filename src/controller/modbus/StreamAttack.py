@@ -100,7 +100,7 @@ import re
 import subprocess
 import time
 
-from pymetasploit3.msfrpc import MeterpreterSession  # type: ignore
+from pymetasploit3.msfrpc import MeterpreterSession
 from typing import Any, Dict, List, Optional, Union
 
 from controller.modbus.ModbusAttack import ModbusAttack, ModbusCommand, ModbusConstants
@@ -1192,18 +1192,19 @@ class StreamAttack(ModbusAttack):
         }
 
         # Create address-based format
-        address_based = {
+        address_based: Dict[str, Any] = {
             "samples": [],
             "start_time": time.time(),
             "duration": 30,
             "parameters": {},
         }
+        parameters_dict: Dict[int, Dict[str, Any]] = address_based["parameters"]
 
         # Convert each parameter to address-based format
         for param_name, value in parameter_data.items():
             if param_name in param_to_address:
                 address = param_to_address[param_name]
-                address_based["parameters"][address] = {
+                parameters_dict[address] = {
                     "mean": value,
                     "latest_value": value,
                     "parameter_type": self._get_parameter_type_from_name(param_name),

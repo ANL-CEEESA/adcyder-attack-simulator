@@ -1,5 +1,7 @@
 Process to export to Github with squashed snapshot:
 
+Github origin: git@github.com:ANL-CEEESA/adcyder-attack-simulator.git
+
 git switch main
 # move to internal branch you want to export from
 

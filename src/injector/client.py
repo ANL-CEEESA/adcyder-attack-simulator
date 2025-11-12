@@ -1,7 +1,7 @@
 import argparse
 from historian import data_stream_pb2
 from historian import data_stream_pb2_grpc
-import grpc  # type: ignore
+import grpc
 import logging
 
 from datetime import datetime
@@ -17,10 +17,10 @@ def stream_data(server_address: str = "localhost:50051") -> None:
     # Create a gRPC channel
     with grpc.insecure_channel(server_address) as channel:
         # Create a stub (client)
-        stub = data_stream_pb2_grpc.DataStreamServiceStub(channel)
+        stub = data_stream_pb2_grpc.DataStreamServiceStub(channel)  # type: ignore[no-untyped-call]
 
         # Create an empty request
-        request = data_stream_pb2.StreamRequest()
+        request = data_stream_pb2.StreamRequest()  # type: ignore[attr-defined]
 
         logging.info(f"Requesting data stream from server at {server_address}")
         try:

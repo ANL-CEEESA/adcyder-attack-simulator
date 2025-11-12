@@ -119,11 +119,11 @@ def test_start_listener_success(mock_socket_conn, attack_instance, mock_msf_clie
     # Mock successful socket connection (listener is active)
     mock_socket_conn.return_value.__enter__.return_value = MagicMock()
     
-    with patch('controller.Attack.MY_IP_ADDRESS', '10.0.0.1'), \
+    with patch('controller.Attack.RED_NODE_IP_ADDRESS', '10.0.0.1'), \
          patch('controller.Attack.time.sleep'):
-        
+
         result = attack_instance.start_listener("linux/x64")
-        
+
         # Verify
         mock_msf_client.modules.use.assert_called_with("exploit", "multi/handler")
         assert mock_exploit.runoptions["payload"] == "linux/x64/meterpreter/reverse_tcp"

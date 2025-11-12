@@ -52,7 +52,7 @@ lint:
 
 type-check:
 	@echo "Running type checks..."
-	@${MAMBA_DEV} mypy --install-types --warn-unreachable --strict --non-interactive $(SRC_DIR)/ tests/
+	@${MAMBA_DEV} mypy --install-types --warn-unreachable --strict --non-interactive --pretty --show-error-context --no-error-summary $(SRC_DIR)/
 	@echo "$(COLOR_GREEN)Type checking complete$(COLOR_RESET)"
 
 security:

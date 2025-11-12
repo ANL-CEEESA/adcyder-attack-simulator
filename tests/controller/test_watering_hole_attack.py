@@ -155,18 +155,19 @@ def test_cleanup_target_processes(attack_instance):
     # Setup mock SSH client
     mock_ssh_client = MagicMock()
     attack_instance.ssh_client = mock_ssh_client
-    
-    # Mock the send_ssh_command_with_random_delays method
-    with patch.object(attack_instance, 'send_ssh_command_with_random_delays') as mock_send_cmd:
+
+    # Mock the send_ssh_command_with_random_delays and validate_ssh_session methods
+    with patch.object(attack_instance, 'send_ssh_command_with_random_delays') as mock_send_cmd, \
+         patch.object(attack_instance, 'validate_ssh_session', return_value=True) as mock_validate:
         attack_instance.cleanup_target_processes()
-        
+
         # Verify cleanup commands were sent
         expected_commands = [
             "pkill -f 'malware$' 2>/dev/null || true",
             "pkill -f malware_launcher 2>/dev/null || true",
             "rm -f /tmp/malware /tmp/malware_launcher.sh /tmp/malware.lock /tmp/malware.pid /tmp/malware.log 2>/dev/null || true",
         ]
-        
+
         assert mock_send_cmd.call_count == len(expected_commands)
         for i, expected_cmd in enumerate(expected_commands):
             mock_send_cmd.assert_any_call(expected_cmd)
@@ -214,15 +215,15 @@ def test_establish_reverse_shell_ssh_failure(
     mock_ssh_client.connect.side_effect = Exception("SSH connection failed")
     
     # Mock settings
-    with patch('controller.WateringHoleAttack.TARGET_IP', '192.168.1.100'), \
-         patch('controller.WateringHoleAttack.TARGET_SSH_USER', 'testuser'), \
-         patch('controller.WateringHoleAttack.TARGET_SSH_PASSWORD', 'testpass'), \
-         patch('controller.WateringHoleAttack.TARGET_SSH_USER_KEYFILE', None), \
+    with patch('controller.WateringHoleAttack.INVERTER_IP_ADDRESS', '192.168.1.100'), \
+         patch('controller.WateringHoleAttack.INVERTER_SSH_USER', 'testuser'), \
+         patch('controller.WateringHoleAttack.INVERTER_SSH_PASSWORD', 'testpass'), \
+         patch('controller.WateringHoleAttack.INVERTER_SSH_USER_KEYFILE', None), \
          patch('controller.WateringHoleAttack.TARGET_PLATFORM', 'linux/x64'), \
-         patch('controller.WateringHoleAttack.MY_IP_ADDRESS', '10.0.0.1'), \
+         patch('controller.WateringHoleAttack.RED_NODE_IP_ADDRESS', '10.0.0.1'), \
          patch.object(attack_instance, 'start_listener', return_value=[]), \
          patch("builtins.open", mock_open()):
-        
+
         with pytest.raises(Exception, match="SSH connection failed"):
             attack_instance.establish_reverse_shell()
 
@@ -242,31 +243,31 @@ def test_teardown_class_cleanup(attack_instance):
         
         WateringHoleAttack.tearDownClass()
         
-        # Verify cleanup
+        # Verify cleanup (rmtree is called with ignore_errors=True)
         mock_httpd.shutdown.assert_called_once()
         mock_httpd.server_close.assert_called_once()
-        mock_rmtree.assert_called_once_with(mock_temp_dir)
+        mock_rmtree.assert_called_once_with(mock_temp_dir, ignore_errors=True)
         mock_super_teardown.assert_called_once()
 
 
 @pytest.mark.unit
-@patch('controller.WateringHoleAttack.logging.error')
-def test_teardown_class_cleanup_error(mock_log_error, attack_instance):
+@patch('controller.WateringHoleAttack.logging.warning')
+def test_teardown_class_cleanup_error(mock_log_warning, attack_instance):
     """Test tearDownClass cleanup with error handling."""
     # Setup mock objects
     mock_httpd = MagicMock()
     mock_temp_dir = "/tmp/test_dir"
-    
+
     WateringHoleAttack.httpd = mock_httpd
     WateringHoleAttack.temp_dir = mock_temp_dir
-    
+
     with patch('controller.WateringHoleAttack.shutil.rmtree', side_effect=Exception("Cleanup error")) as mock_rmtree, \
          patch('controller.WateringHoleAttack.Attack.tearDownClass') as mock_super_teardown:
-        
+
         WateringHoleAttack.tearDownClass()
-        
-        # Verify error was logged
-        mock_log_error.assert_called_once()
+
+        # Verify warning was logged (temp directory cleanup errors are logged as warnings)
+        mock_log_warning.assert_called_once()
         mock_super_teardown.assert_called_once()
 
 

@@ -14,7 +14,7 @@ import time
 from dataclasses import dataclass
 from typing import ClassVar, NotRequired, Optional, List, TypedDict, Dict, Any
 from typing import ClassVar, NotRequired, Optional, List, TypedDict, Dict, Any
-from pymetasploit3.msfrpc import MeterpreterSession  # type: ignore
+from pymetasploit3.msfrpc import MeterpreterSession
 
 from controller.Attack import Attack
 from controller.WateringHoleAttack import WateringHoleAttack
@@ -678,7 +678,7 @@ class ModbusAttack(Attack):
             f"Starting enhanced Modbus traffic capture for {duration_seconds} seconds"
         )
 
-        captured_data = {
+        captured_data: Dict[str, Any] = {
             "samples": [],
             "start_time": time.time(),
             "duration": duration_seconds,
@@ -686,6 +686,8 @@ class ModbusAttack(Attack):
             "traffic_detected": False,
             "capture_method": "proxy" if proxy_instance else "network_scan",
         }
+        # Type hint for mypy - samples is a list of dicts
+        samples_list: List[Dict[str, Any]] = captured_data["samples"]
 
         # Sample traffic at regular intervals
         sample_interval = 2  # seconds
@@ -700,7 +702,7 @@ class ModbusAttack(Attack):
                 if sample and sample.get("has_real_traffic", False):
                     sample["timestamp"] = time.time()
                     sample["sample_number"] = sample_num + 1
-                    captured_data["samples"].append(sample)
+                    samples_list.append(sample)
                     captured_data["traffic_detected"] = True
                     successful_samples += 1
 
@@ -733,13 +735,12 @@ class ModbusAttack(Attack):
             return captured_data
 
         # Analyze captured data to extract patterns
-        captured_data["parameters"] = self._analyze_captured_traffic(
-            captured_data["samples"]
-        )
+        captured_data["parameters"] = self._analyze_captured_traffic(samples_list)
 
+        params_dict: Dict[str, Any] = captured_data["parameters"]
         logging.info(
             f"Enhanced traffic capture complete. Captured {successful_samples}/{samples_needed} samples "
-            f"with real traffic, extracted {len(captured_data['parameters'])} parameters"
+            f"with real traffic, extracted {len(params_dict)} parameters"
         )
         return captured_data
 
@@ -750,7 +751,8 @@ class ModbusAttack(Attack):
         Returns:
             Dictionary containing register values for this sample
         """
-        sample = {"registers": {}, "timestamp": time.time()}
+        sample: Dict[str, Any] = {"registers": {}, "timestamp": time.time()}
+        registers_dict: Dict[int, Any] = sample["registers"]
 
         # Common inverter register addresses to monitor
         # These are typical addresses used by solar inverters
@@ -771,7 +773,7 @@ class ModbusAttack(Attack):
                 # For simulation, we'll generate realistic values
                 value = self._simulate_register_value(address)
                 if value is not None:
-                    sample["registers"][address] = value
+                    registers_dict[address] = value
 
             except Exception as e:
                 logging.debug(f"Failed to capture register {address}: {e}")
@@ -844,12 +846,13 @@ class ModbusAttack(Attack):
         Returns:
             Sample data from proxy cache
         """
-        sample = {
+        sample: Dict[str, Any] = {
             "registers": {},
             "timestamp": time.time(),
             "has_real_traffic": False,
             "capture_method": "proxy_cache",
         }
+        registers_dict: Dict[int, Any] = sample["registers"]
 
         try:
             if not hasattr(proxy_instance, "authentic_data_cache"):
@@ -866,7 +869,7 @@ class ModbusAttack(Attack):
                     # Parse the cached Modbus frame to extract register values
                     registers = self._parse_modbus_frame_for_registers(cached_data)
                     if registers:
-                        sample["registers"].update(registers)
+                        registers_dict.update(registers)
                         sample["has_real_traffic"] = True
 
                 except Exception as e:
@@ -875,7 +878,7 @@ class ModbusAttack(Attack):
 
             if sample["has_real_traffic"]:
                 logging.debug(
-                    f"Captured {len(sample['registers'])} registers from proxy cache"
+                    f"Captured {len(registers_dict)} registers from proxy cache"
                 )
 
             return sample
@@ -943,12 +946,13 @@ class ModbusAttack(Attack):
         Returns:
             Sample data from direct polling
         """
-        sample = {
+        sample: Dict[str, Any] = {
             "registers": {},
             "timestamp": time.time(),
             "has_real_traffic": False,
             "capture_method": "direct_polling",
         }
+        registers_dict: Dict[int, Any] = sample["registers"]
 
         try:
             # Only attempt direct polling if we have an active session and target
@@ -987,12 +991,12 @@ class ModbusAttack(Attack):
                         # Successfully read a register - this indicates real traffic capability
                         try:
                             value = float(result.strip())
-                            sample["registers"][address] = value
+                            registers_dict[address] = value
                             sample["has_real_traffic"] = True
                         except ValueError:
                             # Result wasn't a number, but we got a response
                             sample["has_real_traffic"] = True
-                            sample["registers"][address] = result.strip()
+                            registers_dict[address] = result.strip()
 
                 except Exception as e:
                     logging.debug(f"Direct polling failed for register {address}: {e}")
@@ -1000,7 +1004,7 @@ class ModbusAttack(Attack):
 
             if sample["has_real_traffic"]:
                 logging.debug(
-                    f"Direct polling captured {len(sample['registers'])} registers"
+                    f"Direct polling captured {len(registers_dict)} registers"
                 )
 
             return sample
@@ -1019,7 +1023,7 @@ class ModbusAttack(Attack):
         Returns:
             Dictionary mapping register addresses to values
         """
-        registers = {}
+        registers: Dict[int, Any] = {}
 
         try:
             # Basic Modbus TCP frame parsing
@@ -1332,12 +1336,13 @@ class ModbusAttack(Attack):
             # Uses sophisticated exponential transition for smooth blending
             alpha = math.exp(-3 * second / transition_duration)
 
-            transition_point = {
+            transition_point: Dict[str, Any] = {
                 "timestamp": time.time() + second,
                 "alpha": alpha,
                 "registers": {},
                 "quality": "nominal",
             }
+            tp_registers: Dict[int, float] = transition_point["registers"]
 
             # Calculate blended values for each parameter with enhanced synthetic generation
             for address, param_info in parameters.items():
@@ -1348,9 +1353,7 @@ class ModbusAttack(Attack):
 
                 # Blend: real * alpha + synthetic * (1-alpha)
                 blended_value = real_value * alpha + synthetic_value * (1 - alpha)
-                transition_point["registers"][address] = round(
-                    blended_value, 3
-                )  # Higher precision
+                tp_registers[address] = round(blended_value, 3)  # Higher precision
 
             transition_points.append(transition_point)
 
@@ -1389,12 +1392,13 @@ class ModbusAttack(Attack):
 
         # Generate transition points at 1-second intervals
         for second in range(transition_duration):
-            transition_point = {
+            transition_point: Dict[str, Any] = {
                 "timestamp": time.time() + second,
                 "alpha": 0.0,  # Pure synthetic data
                 "registers": {},
                 "quality": "synthetic",
             }
+            tp_registers: Dict[int, float] = transition_point["registers"]
 
             # Generate synthetic values for each register
             for address, base_value in default_registers.items():
@@ -1410,7 +1414,7 @@ class ModbusAttack(Attack):
                 synthetic_value = self._generate_enhanced_synthetic_value(
                     address, param_info, second
                 )
-                transition_point["registers"][address] = round(synthetic_value, 3)
+                tp_registers[address] = round(synthetic_value, 3)
 
             transition_points.append(transition_point)
 
@@ -1433,7 +1437,7 @@ class ModbusAttack(Attack):
         Returns:
             Synthetic value for this parameter
         """
-        base_value = param_info["mean"]
+        base_value: float = float(param_info["mean"])
         param_type = param_info["parameter_type"]
 
         # Parameter-specific noise and variation patterns
@@ -1568,6 +1572,7 @@ class ModbusAttack(Attack):
 
         # Use address-specific mapping if available, otherwise fall back to parameter type
         specific_param = address_to_param.get(address, param_type)
+        config: Dict[str, Any]
         if specific_param:
             config = enhanced_configs.get(
                 specific_param,
@@ -1598,26 +1603,30 @@ class ModbusAttack(Attack):
             return 0.0
 
         # Enhanced noise generation with realistic electrical characteristics
-        noise = random.gauss(0, config["base_noise"])
+        base_noise = float(config.get("base_noise", 0.02))  # type: ignore[arg-type]
+        trend_amplitude = float(config.get("trend_amplitude", 0.08))  # type: ignore[arg-type]
+        cycle_period = float(config.get("cycle_period", 360))  # type: ignore[arg-type]
+        bounds_tuple = config.get("bounds", (0.0, base_value * 2))
+        bounds: tuple[float, float] = (float(bounds_tuple[0]), float(bounds_tuple[1]))  # type: ignore[index]
+
+        noise = random.gauss(0, base_noise)
 
         # Sophisticated sinusoidal trend with phase variation
-        trend = config["trend_amplitude"] * math.sin(
-            2 * math.pi * time_offset / config["cycle_period"]
-        )
+        trend = trend_amplitude * math.sin(2 * math.pi * time_offset / cycle_period)
 
         # Enhanced random walk component for realism
-        walk = random.gauss(0, config["base_noise"] * 0.5)
+        walk = random.gauss(0, base_noise * 0.5)
 
         # Combine components with enhanced blending
         synthetic_value = base_value * (1 + noise + trend + walk)
 
         # Apply realistic physical bounds with enhanced constraints
-        min_bound, max_bound = config["bounds"]
+        min_bound, max_bound = bounds
         synthetic_value = max(min_bound, min(max_bound, synthetic_value))
 
         # Apply precision based on parameter type
-        precision = config.get("precision", 2)
-        return round(synthetic_value, precision)
+        precision = int(config.get("precision", 2))  # type: ignore[call-overload]
+        return float(round(synthetic_value, precision))
 
     def execute_fdia_attack(self, baseline_data: Dict[str, Any]) -> None:
         """

@@ -12,7 +12,7 @@ import time
 
 from dataclasses import dataclass
 from typing import ClassVar, NotRequired, Optional, List, TypedDict, Dict, Any
-from pymetasploit3.msfrpc import MeterpreterSession  # type: ignore
+from pymetasploit3.msfrpc import MeterpreterSession
 
 from controller.Attack import Attack
 from controller.WateringHoleAttack import WateringHoleAttack
@@ -313,7 +313,7 @@ class DNP3Attack(Attack):
         if not INVERTER_IP_ADDRESS:
             return "127.0.0.1"
         else:
-            return str(INVERTER_IP)
+            return str(INVERTER_IP_ADDRESS)
 
     @classmethod
     def _get_meterpreter_session(cls) -> MeterpreterSession:

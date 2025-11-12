@@ -13,7 +13,7 @@ import time
 import unittest
 
 from functools import wraps
-from pymetasploit3.msfrpc import MeterpreterSession, MsfRpcClient  # type: ignore
+from pymetasploit3.msfrpc import MeterpreterSession, MsfRpcClient
 from types import FrameType
 from typing import Any, Callable, List, Optional, ParamSpec, TypeVar, Union
 
@@ -50,6 +50,7 @@ class Attack(unittest.TestCase):
     COMMAND_TIMEOUT = 30
 
     msf_client: MsfRpcClient
+    ssh_client: paramiko.SSHClient | None = None
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -422,6 +423,9 @@ class Attack(unittest.TestCase):
     @random_delay(25, 125)
     def send_ssh_command_with_random_delays(self, command: str) -> str:
         """Send a command with random inter-keystroke delays using Paramiko SSHClient."""
+        if self.ssh_client is None:
+            raise RuntimeError("SSH client not initialized")
+
         channel = None
         try:
             # Open a new interactive shell channel

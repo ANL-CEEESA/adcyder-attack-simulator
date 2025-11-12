@@ -1,6 +1,7 @@
 *.csv
 *.pyc
 *.swp
+*.txt
 .DS_Store
 .claude
 .clinerules/memory-bank

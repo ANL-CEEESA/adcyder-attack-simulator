@@ -7,7 +7,7 @@ import socketserver
 import tempfile
 import time
 
-from pymetasploit3.msfrpc import MeterpreterSession, MsfRpcClient  # type: ignore
+from pymetasploit3.msfrpc import MeterpreterSession, MsfRpcClient
 from threading import Thread
 
 from controller.Attack import Attack
@@ -93,12 +93,6 @@ class WateringHoleAttack(Attack):
         for cmd in cleanup_commands:
             try:
                 # Verify SSH client is still valid before each command
-                if self.ssh_client is None:
-                    logging.warning(
-                        f"SSH client is None, skipping cleanup command: {cmd}"
-                    )
-                    continue
-
                 if not self.validate_ssh_session(self.ssh_client):
                     logging.warning(
                         f"SSH session invalid, skipping cleanup command: {cmd}"
