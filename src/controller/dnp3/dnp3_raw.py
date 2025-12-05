@@ -15,8 +15,8 @@ logger = logging.getLogger(__name__)
 
 
 def calculate_crc(data: bytes) -> int:
-    """Calculate DNP3 CRC-16."""
-    crc = 0xFFFF
+    """Calculate DNP3 CRC-16 with correct parameters."""
+    crc = 0x0000  # Start with 0x0000, not 0xFFFF
     for byte in data:
         crc ^= byte
         for _ in range(8):
@@ -24,6 +24,7 @@ def calculate_crc(data: bytes) -> int:
                 crc = (crc >> 1) ^ 0xA6BC
             else:
                 crc = crc >> 1
+    crc ^= 0xFFFF  # XOR output with 0xFFFF
     return crc
 
 
@@ -47,8 +48,8 @@ def build_read_request(
     # Add data CRC (every 16 bytes)
     data_with_crc = add_data_crcs(data)
 
-    # Link layer header
-    link_header = build_link_header(len(data_with_crc), control=0x44)
+    # Link layer header (0xC4 = primary station unconfirmed user data)
+    link_header = build_link_header(len(data_with_crc), control=0xC4)
 
     return link_header + data_with_crc
 
@@ -97,13 +98,13 @@ def build_write_request(
     # Add data CRC (every 16 bytes)
     data_with_crc = add_data_crcs(data)
 
-    # Link layer header
-    link_header = build_link_header(len(data_with_crc), control=0x44)
+    # Link layer header (0xC4 = primary station unconfirmed user data)
+    link_header = build_link_header(len(data_with_crc), control=0xC4)
 
     return link_header + data_with_crc
 
 
-def build_link_header(data_length: int, control: int = 0x44) -> bytes:
+def build_link_header(data_length: int, control: int = 0xC4) -> bytes:
     """Build DNP3 link layer header."""
     sync1 = 0x05
     sync2 = 0x64
@@ -112,7 +113,8 @@ def build_link_header(data_length: int, control: int = 0x44) -> bytes:
     src_addr = 0x0000
 
     header = struct.pack("<BBBBHH", sync1, sync2, length, control, dest_addr, src_addr)
-    header_crc = calculate_crc(header[2:])
+    # CRC includes sync bytes (all 8 bytes of header)
+    header_crc = calculate_crc(header)
 
     return header + struct.pack("<H", header_crc)
 
@@ -146,20 +148,28 @@ def receive_response(sock: socket.socket, timeout: float = 5.0) -> Optional[byte
 
         # Read link header (10 bytes)
         header = sock.recv(10)
+        logger.debug(f"Received header ({len(header)} bytes): {header.hex() if header else 'None'}")
+
         if len(header) < 10:
+            logger.warning(f"Header too short: got {len(header)} bytes, expected 10")
             return None
 
         # Verify sync bytes
         if header[0] != 0x05 or header[1] != 0x64:
+            logger.warning(f"Invalid sync bytes: got 0x{header[0]:02x}{header[1]:02x}, expected 0x0564")
             return None
 
         # Get data length
         data_length = header[2] - 5
+        logger.debug(f"Data length from header: {data_length} bytes")
 
         # Read remaining data
         remaining = sock.recv(data_length + 100)  # Extra buffer for CRCs
+        logger.debug(f"Received data ({len(remaining)} bytes): {remaining.hex() if remaining else 'None'}")
 
-        return header + remaining
+        full_response = header + remaining
+        logger.info(f"Complete DNP3 response: {full_response.hex()}")
+        return full_response
 
     except socket.timeout:
         logger.warning("Socket timeout waiting for DNP3 response")
