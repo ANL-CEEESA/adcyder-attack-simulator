@@ -1,9 +1,9 @@
 import argparse
 import csv
 import concurrent.futures
-import data_stream_pb2  # type: ignore
+import data_stream_pb2
 import data_stream_pb2_grpc  # type: ignore
-import grpc  # type: ignore
+import grpc
 import logging
 import time
 from typing import Generator, Any
