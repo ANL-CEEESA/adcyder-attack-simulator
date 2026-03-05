@@ -148,7 +148,9 @@ def receive_response(sock: socket.socket, timeout: float = 5.0) -> Optional[byte
 
         # Read link header (10 bytes)
         header = sock.recv(10)
-        logger.debug(f"Received header ({len(header)} bytes): {header.hex() if header else 'None'}")
+        logger.debug(
+            f"Received header ({len(header)} bytes): {header.hex() if header else 'None'}"
+        )
 
         if len(header) < 10:
             logger.warning(f"Header too short: got {len(header)} bytes, expected 10")
@@ -156,7 +158,9 @@ def receive_response(sock: socket.socket, timeout: float = 5.0) -> Optional[byte
 
         # Verify sync bytes
         if header[0] != 0x05 or header[1] != 0x64:
-            logger.warning(f"Invalid sync bytes: got 0x{header[0]:02x}{header[1]:02x}, expected 0x0564")
+            logger.warning(
+                f"Invalid sync bytes: got 0x{header[0]:02x}{header[1]:02x}, expected 0x0564"
+            )
             return None
 
         # Get data length
@@ -165,7 +169,9 @@ def receive_response(sock: socket.socket, timeout: float = 5.0) -> Optional[byte
 
         # Read remaining data
         remaining = sock.recv(data_length + 100)  # Extra buffer for CRCs
-        logger.debug(f"Received data ({len(remaining)} bytes): {remaining.hex() if remaining else 'None'}")
+        logger.debug(
+            f"Received data ({len(remaining)} bytes): {remaining.hex() if remaining else 'None'}"
+        )
 
         full_response = header + remaining
         logger.info(f"Complete DNP3 response: {full_response.hex()}")

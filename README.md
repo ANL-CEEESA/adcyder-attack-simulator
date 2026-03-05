@@ -83,7 +83,14 @@ python3 src/standalone_modbus_attack.py --discover --attack dos
 # DNP3 attacks with device discovery
 python3 src/standalone_dnp3_attack.py --discover-only --discovery-timeout 15.0
 python3 src/standalone_dnp3_attack.py --target 192.168.1.100 --attack exfiltration
+
+# DNP3 attacks against OPAL-RT (addresses 0-35)
+python3 src/standalone_dnp3_attack.py --target 10.1.0.71 --attack exfiltration \
+    --analog-start 0 --analog-count 36 \
+    --binary-start 0 --binary-count 36
 ```
+
+**Note:** For OPAL-RT compatibility and configurable address ranges, see [`docs/OPAL-RT-COMPATIBILITY.md`](docs/OPAL-RT-COMPATIBILITY.md)
 
 ## Client Architecture
 

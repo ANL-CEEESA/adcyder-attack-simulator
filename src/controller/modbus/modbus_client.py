@@ -115,7 +115,7 @@ class ModbusClient:
         self._pymodbus_client = ModbusTcpClient(
             host=self.host, port=self.port, timeout=self.timeout
         )
-        if not self._pymodbus_client.connect():  # type: ignore[no-untyped-call]
+        if not self._pymodbus_client.connect():
             raise ConnectionError(
                 f"Failed to connect with pymodbus to {self.host}:{self.port}"
             )
@@ -128,7 +128,7 @@ class ModbusClient:
             self._socket.close()
             self._socket = None
         if self._pymodbus_client:
-            self._pymodbus_client.close()  # type: ignore[no-untyped-call]
+            self._pymodbus_client.close()
             self._pymodbus_client = None
 
     def disconnect(self) -> None:
@@ -168,7 +168,7 @@ class ModbusClient:
 
             # Map function codes to pymodbus methods
             if function_code == 1:  # Read Coils
-                response = self._pymodbus_client.read_coils(  # type: ignore[misc]
+                response = self._pymodbus_client.read_coils(
                     start_address, quantity, self.unit_id
                 )
                 if response.isError():
@@ -182,7 +182,7 @@ class ModbusClient:
                 }
 
             elif function_code == 2:  # Read Discrete Inputs
-                response = self._pymodbus_client.read_discrete_inputs(  # type: ignore[misc]
+                response = self._pymodbus_client.read_discrete_inputs(
                     start_address, quantity, self.unit_id
                 )
                 if response.isError():
@@ -196,7 +196,7 @@ class ModbusClient:
                 }
 
             elif function_code == 3:  # Read Holding Registers
-                response = self._pymodbus_client.read_holding_registers(  # type: ignore[misc]
+                response = self._pymodbus_client.read_holding_registers(
                     start_address, quantity, self.unit_id
                 )
                 if response.isError():
@@ -210,7 +210,7 @@ class ModbusClient:
                 }
 
             elif function_code == 4:  # Read Input Registers
-                response = self._pymodbus_client.read_input_registers(  # type: ignore[misc]
+                response = self._pymodbus_client.read_input_registers(
                     start_address, quantity, self.unit_id
                 )
                 if response.isError():
@@ -227,7 +227,7 @@ class ModbusClient:
                 if not data:
                     return {"error": "Data required for write operation"}
                 value = bool(data[0])
-                response = self._pymodbus_client.write_coil(  # type: ignore[misc]
+                response = self._pymodbus_client.write_coil(
                     start_address, value, self.unit_id
                 )
                 if response.isError():
@@ -244,7 +244,7 @@ class ModbusClient:
                 if not data:
                     return {"error": "Data required for write operation"}
                 reg_value = int(data[0])
-                response = self._pymodbus_client.write_register(  # type: ignore[misc]
+                response = self._pymodbus_client.write_register(
                     start_address, reg_value, self.unit_id
                 )
                 if response.isError():
@@ -261,7 +261,7 @@ class ModbusClient:
                 if not data:
                     return {"error": "Data required for write operation"}
                 values = [bool(x) for x in data[:quantity]]
-                response = self._pymodbus_client.write_coils(  # type: ignore[misc]
+                response = self._pymodbus_client.write_coils(
                     start_address, values, self.unit_id
                 )
                 if response.isError():
@@ -279,7 +279,7 @@ class ModbusClient:
                 if not data:
                     return {"error": "Data required for write operation"}
                 reg_values = [int(x) for x in data[:quantity]]
-                response = self._pymodbus_client.write_registers(  # type: ignore[misc]
+                response = self._pymodbus_client.write_registers(
                     start_address, reg_values, self.unit_id
                 )
                 if response.isError():
