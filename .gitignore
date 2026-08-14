@@ -3,7 +3,8 @@
 *.swp
 *.txt
 .DS_Store
-.claude
+.claude/*
+!.claude/agents/
 .clinerules/memory-bank
 .mypy_cache
 .vscode
